@@ -1,0 +1,83 @@
+=head1 NAME
+
+highlight - highlight strings matching perl regular expressions in files
+
+=head1 SYNOPSIS
+
+    %highlight -i 'hello world' menu.h main.c
+    %highlight '\d+' --color 'bright blue on yellow' *.txt
+    %head -n20 mail.txt | highlight -l '^Subject:.*'
+    %highlight --help
+
+=head1 DESCRIPTION 
+
+highlight [OPTION]... PATTERN [FILE]...
+
+Highlight PATTERN in each FILE or standard input.
+PATTERN is a perl regular expression.
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-i>, B<--ignore-case>
+
+Ignore case distinctions.
+
+=item B<-m>, B<--multiline>
+
+Consider PATTERN as a multiline expression. This will add the '/ms' flags to the Perl regular expression.
+
+=item B<-l>, B<--highlight-line>
+
+Highlight the entire line instead of just the match.
+
+=item B<-n>, B<--line-number>
+
+Print line number with output lines.
+
+=item B<-H>, B<--with-filename>
+
+Prepend each line with the current file's name.
+
+=item B<-h>, B<--no-filename>
+
+Suppress the prefixing filename on output.
+
+=item B<-s>, B<--no-messages>
+
+Suppress error messages about nonexistant or unreadable files.
+
+=item B<--label=LABEL>
+
+Print LABEL as filename for the standard input.
+
+=item B<-c>, B<--color>=COLOR
+
+Use COLOR to highlight the matches. COLOR may be expressed either as a human-readable color like "dark blue" or "bold green", or as the numbers in an ANSI escape code (e.g. "31", "1;34;42"). Your terminal may not be able to display all codes.
+
+=item B<--help>
+
+Display this help screen
+
+=item B<-V>, B<--version>
+
+Display the script's version and copying information.
+
+=back
+
+=head1 AUTHOR
+
+Martijn van der Kwast <stilgar1@gmx.net>
+
+=head1 COPYRIGHT
+
+This file is copyright (c) 2011-2013 Martijn van der Kwast <martijn@vdkwast.com>. All rights reserved.
+
+This script is free software; you may redistribute and/or modify it under the same terms as Perl itself.
+
+=head1 BUGS
+
+Most of what this program does can be reproduced with grep using the C<-C> and
+C<--color> options.
+

@@ -1,0 +1,382 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use Getopt::Long;
+Getopt::Long::Configure( 'gnu_getopt' );
+
+use Pod::Usage;
+
+use constant VERSION => '20100224';
+
+use constant DEFAULT_COLOR => '1;34';
+use constant MATCH_COLOR => '1;31';
+use constant FILENAME_COLOR => 35;
+use constant SEPARATOR_COLOR => 36;
+use constant LINENO_COLOR => 32;
+
+my %ANSI_COLORS = (
+    black => 30,
+    red => 31,
+    green => 32 ,
+    yellow => 33 ,
+    blue => 34 ,
+    magenta => 35 ,
+    purple => 35,
+    cyan => 36 ,
+    white => 37 ,
+    default => 39 ,
+    normal => 0,
+    intense => 1,
+    bold => 1,
+    bright => 1,
+    faint => 2,
+    italic => 3,
+    italics => 3,
+    underline => 4,
+    blink => 5,
+    blinking => 5,
+    'fast-blinking' => 6,
+    'reverse' => 7,
+    reversed => 7,
+    inverse => 7,
+    inversed => 7,
+    inverted => 7,
+    negative => 7,
+    conceal => 8,
+    concealed => 8,
+    hidden => 8,
+    hide => 8,
+    strikethrough => 9,
+    'strike-through' => 9,
+    crossed => 9,
+);
+
+my $opt_ignore_case = 0;
+my $opt_multiline = 0;
+my $opt_invert_match = 0;
+my $opt_highlight_line = 0;
+my $opt_show_line_number = 0;
+my $opt_show_filename = 0;
+my $opt_force_hide_filename = 0;
+my $opt_hide_messages = 0;
+my $opt_label = 'STDIN';
+my $opt_include_stdin = 0;
+my $opt_help = 0;
+my $opt_rx;
+
+# compiled regular expression
+my $rx;
+
+# matches color
+my $match_color = MATCH_COLOR;
+
+# colorize text using ANSI escape codes
+sub start_color {
+    my $color = shift;
+    return "\e[${color}m";
+}
+
+sub end_color {
+    return "\e[0m";
+}
+
+sub colorize {
+    my ( $color, $text ) = @_;
+    return start_color( $color ) . $text . end_color();
+}
+
+# parse a color in the form "31", "1;31", "0;31;42", "red", "bright blue"
+# "bold green italic"
+sub parse_color {
+    my $color = shift;
+    if ( $color =~ /^(?:\d+;)*\d+$/ ) {
+	# it's an ANSI color
+	return $color;
+    }
+    else {
+	my @words = split /\s+/, lc $color;
+	my @codes;
+        my $isbg = 0;
+	foreach ( @words ) {
+            if ( $_ eq 'on' ) {
+                if ( $isbg ) {
+                    syntax_message( "Unexpected color token: $_" );
+                    last;
+                }
+                $isbg = 1;
+                next;
+            }
+	    unless ( exists $ANSI_COLORS{ $_ } ) {
+		syntax_message( "Unknown color specification: $_" );
+		next;
+	    }
+            if ( $isbg and $ANSI_COLORS{ $_ } >= 30 and $ANSI_COLORS{ $_ } <= 37 ) {
+                push @codes, 10 + $ANSI_COLORS{ $_ };
+            }
+            else {
+                push @codes, $ANSI_COLORS{ $_ };
+            }
+	}
+
+	unless ( @codes ) {
+	    syntax_message( "No valid color provided, using default." );
+	    return DEFAULT_COLOR;
+	}
+
+	@codes = sort @codes;
+	return join ';', @codes;
+    }
+}
+
+# for use with single line regular expressions
+sub highlight_file_lines {
+    my ( $fh, $prefix ) = @_;
+    my $line = 1;
+
+    for ( <$fh> ) {
+	chomp;
+	print $prefix;
+	print colorize( LINENO_COLOR, $line ) . colorize( SEPARATOR_COLOR, ':' )
+	    if $opt_show_line_number;
+
+	if ( $opt_highlight_line ) {
+	    if ( m/$rx/ ) {
+		print colorize( $match_color, $_ ) . "\n";
+	    }
+	    else {
+		print "$_\n";
+	    }
+	}
+	else {
+	    s/$rx/colorize( $match_color, $& )/eg;
+	    print "$_\n";
+	}
+    }
+    continue {
+	$line++;
+    }
+}
+
+# for use with multiline regular expressions
+sub highlight_file_all {
+    my ( $fh, $prefix ) = @_;
+    local $/ = undef;
+
+    $_ = <$fh>;
+
+    s/$rx/colorize( $match_color, $& )/emsg;
+
+    if ( $opt_show_line_number or $opt_show_filename )
+    {	
+	my $line_rx = qr/^.*$/m;
+	my $line = 1;
+
+	while ( /$line_rx/g ) {
+	    print "${prefix}";
+	    print colorize( LINENO_COLOR, $line ) . colorize( SEPARATOR_COLOR, ':' ) 
+		if $opt_show_line_number;
+	    print "$&\n";
+	}
+	continue {
+	    $line++;
+	}
+    }
+    else {
+	print $_;
+    }
+}
+
+# highlight strings matching the global $rx
+# the actual work will be dispatched to a function required by the 
+# command line.
+sub highlight_file {
+    my ( $fh, $label ) = @_;
+
+    my $prefix = $opt_show_filename
+	? colorize( FILENAME_COLOR, $label ) . colorize( SEPARATOR_COLOR, ':' )
+	: '';
+
+    $opt_multiline
+	? highlight_file_all( $fh, $prefix )
+	: highlight_file_lines( $fh, $prefix );
+}
+
+# display errors about files not found etc
+sub file_message {
+    my ( $fn, $message ) = @_;
+    print STDERR "highlight: $fn: $message\n" unless $opt_hide_messages;
+}
+
+# display errors about invalid syntax etc
+sub syntax_message { 
+    my $message = shift;
+    print STDERR "$message\n";
+}
+
+# display current version and distribution info
+sub exit_with_version {
+    print 'highlight ' . VERSION . " by Martijn van der Kwast <stilgar1\@gmx.net>\n";
+    print "Use and distribute freely as you see fit.\n";
+    exit 0;
+}
+
+my $result = GetOptions(
+    'i|ignore-case',		\$opt_ignore_case,
+    'm|multiline|multi-line',	\$opt_multiline,
+    'l|highlight-line',		\$opt_highlight_line,
+    'n|line-number',            \$opt_show_line_number,
+    'H|with-filename',		\$opt_show_filename,
+    'h|no-filename',		\$opt_force_hide_filename,
+    's|no-messages',            \$opt_hide_messages,
+    'label=s',			\$opt_label,
+    'c|color=s',		sub { $match_color = parse_color( $_[1] ) },
+    'help',			\$opt_help,
+    'V|version',		\&exit_with_version,
+    '',				\$opt_include_stdin,
+);
+
+pod2usage(2) unless $result;
+pod2usage(1) if $opt_help;
+
+# PATTERN argument is mandatory
+$opt_rx = shift @ARGV;
+unless ( defined $opt_rx ) {
+    syntax_message( "highlight: Argument PATTERN is mandatory." );
+    pod2usage(2);
+}
+
+# Compile the regular expression once
+{
+    my $rx_flags = '';
+    $rx_flags .= 'i' if ( $opt_ignore_case );
+    $rx_flags .= 'ms' if ( $opt_multiline );
+    $rx = $rx_flags
+	? qr/(?$rx_flags)$opt_rx/
+	: qr/$opt_rx/;
+}
+
+# Include stdin when the standard input is a pipe and
+# when no files are provided on the command lie.
+$opt_include_stdin = 1 unless -t STDIN;
+$opt_include_stdin = 1 unless @ARGV;
+
+# display filename when multiple files should be highlighted unless forced
+$opt_show_filename = 1 if @ARGV + $opt_include_stdin > 1;
+$opt_show_filename = 0 if $opt_force_hide_filename;
+
+if ( $opt_include_stdin ) {
+    highlight_file( \*STDIN, $opt_label );
+}
+
+{
+    my $fh;
+
+    while ( $_ = shift @ARGV ) {
+	# handle special error conditions ourselves instead of
+	# leaving them to perror to improve readability.
+	if ( -d $_ ) {
+	    file_message( $_, 'Is a directory.' );
+	    next;
+	}
+	unless ( -e $_ ) {
+	    file_message $_, 'No such file.';
+	    next;
+	}
+	unless ( open( $fh, '<', $_ ) ) {
+	    file_message $_, $!;
+	    next;
+	}
+	highlight_file( $fh, $_ );
+    }
+    continue {
+	close $fh if defined $fh;
+    }
+
+}
+
+__END__
+
+=head1 NAME
+
+highlight - highlight strings matching perl regular expressions in files
+
+=head1 SYNOPSIS
+
+    %highlight -i 'hello world' menu.h main.c
+    %highlight '\d+' --color 'bright blue on yellow' *.txt
+    %head -n20 mail.txt | highlight -l '^Subject:.*'
+    %highlight --help
+
+=head1 DESCRIPTION 
+
+highlight [OPTION]... PATTERN [FILE]...
+
+Highlight PATTERN in each FILE or standard input.
+PATTERN is a perl regular expression.
+
+=head1 OPTIONS
+
+=over 8
+
+=item B<-i>, B<--ignore-case>
+
+Ignore case distinctions.
+
+=item B<-m>, B<--multiline>
+
+Consider PATTERN as a multiline expression. This will add the '/ms' flags to the Perl regular expression.
+
+=item B<-l>, B<--highlight-line>
+
+Highlight the entire line instead of just the match.
+
+=item B<-n>, B<--line-number>
+
+Print line number with output lines.
+
+=item B<-H>, B<--with-filename>
+
+Prepend each line with the current file's name.
+
+=item B<-h>, B<--no-filename>
+
+Suppress the prefixing filename on output.
+
+=item B<-s>, B<--no-messages>
+
+Suppress error messages about nonexistant or unreadable files.
+
+=item B<--label=LABEL>
+
+Print LABEL as filename for the standard input.
+
+=item B<-c>, B<--color>=COLOR
+
+Use COLOR to highlight the matches. COLOR may be expressed either as a human-readable color like "dark blue" or "bold green", or as the numbers in an ANSI escape code (e.g. "31", "1;34;42"). Your terminal may not be able to display all codes.
+
+=item B<--help>
+
+Display this help screen
+
+=item B<-V>, B<--version>
+
+Display the script's version and copying information.
+
+=back
+
+=head1 AUTHOR
+
+Martijn van der Kwast <stilgar1@gmx.net>
+
+=head1 COPYRIGHT
+
+This file is copyright (c) 2011-2013 Martijn van der Kwast <martijn@vdkwast.com>. All rights reserved.
+
+This script is free software; you may redistribute and/or modify it under the same terms as Perl itself.
+
+=head1 BUGS
+
+Most of what this program does can be reproduced with grep using the C<-C> and
+C<--color> options.
